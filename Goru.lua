@@ -1,35 +1,30 @@
 -- ==========================================
--- GORU.LUA - CORE LOGIC (SNIFFER + FARM)
+-- GORU.LUA - KEREN HUB (BARISTA LOGIC & FARM)
 -- ==========================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local VirtualUser = game:GetService("VirtualUser")
 local Workspace = game:GetService("Workspace")
+
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
-getgenv().KerenBaristaState = getgenv().KerenBaristaState or {
-    CurrentStage = "NO_GUI",
-    CurrentText = "",
-    SnifferLog = true,
-    AntiAfk = false,
-    AutoFarm = false,
-    InstantPrompt = false,
-    LastHandledStage = nil,
-}
-
-local State = getgenv().KerenBaristaState
-local Goru = {}
-local farmThread = nil
-local lastLoggedText = nil
-local connectedLabel = nil
+getgenv().BaristaAutoFarm = getgenv().BaristaAutoFarm or false
+getgenv().BaristaAntiAfk = getgenv().BaristaAntiAfk or false
+getgenv().BaristaInstantPrompt = getgenv().BaristaInstantPrompt or false
 
 local COORDS = {
     ShiftSpot     = CFrame.new(-4992.262, 4.287, -716.253),
     CoffeeMachine = CFrame.new(-4997.648, 4.287, -794.613),
     Customer      = CFrame.new(-4996.451, 4.287, -760.959),
 }
+
+local currentStage = "NO_GUI"
+local lastHandledStage = nil
+local lastLoggedText = nil
+local connectedLabel = nil
+local farmRunning = false
 
 -- ==========================================
 -- SNIFFER ORDER TEXT
@@ -65,65 +60,45 @@ end
 
 local function syncOrderState(label)
     if not label then
-        State.CurrentStage = "NO_GUI"
-        State.CurrentText = ""
+        currentStage = "NO_GUI"
         return
     end
 
     local rawText = label.Text or ""
-    local stage = detectStage(rawText)
+    currentStage = detectStage(rawText)
 
-    State.CurrentText = rawText
-    State.CurrentStage = stage
-
-    if State.SnifferLog and rawText ~= lastLoggedText then
+    if rawText ~= lastLoggedText then
         lastLoggedText = rawText
-        print("==========================================")
-        print("[Goru.lua Sniffer] Stage : " .. stage)
-        print("[Goru.lua Sniffer] Text  : " .. rawText)
-        print("==========================================")
+        print("[Goru.lua Sniffer] Stage : " .. currentStage .. " | Text : " .. rawText)
     end
 end
 
-function Goru.StartSniffer()
-    if Goru._snifferRunning then return end
-    Goru._snifferRunning = true
-
-    task.spawn(function()
-        while true do
-            pcall(function()
-                local label = getOrderLabel()
-                if label then
-                    if connectedLabel ~= label then
-                        connectedLabel = label
-                        label:GetPropertyChangedSignal("Text"):Connect(function()
-                            syncOrderState(label)
-                        end)
-                    end
-                    syncOrderState(label)
-                else
-                    connectedLabel = nil
-                    syncOrderState(nil)
+task.spawn(function()
+    while true do
+        pcall(function()
+            local label = getOrderLabel()
+            if label then
+                if connectedLabel ~= label then
+                    connectedLabel = label
+                    label:GetPropertyChangedSignal("Text"):Connect(function()
+                        syncOrderState(label)
+                    end)
                 end
-            end)
-            task.wait(0.25)
-        end
-    end)
-end
+                syncOrderState(label)
+            else
+                connectedLabel = nil
+                syncOrderState(nil)
+            end
+        end)
+        task.wait(0.25)
+    end
+end)
 
 -- ==========================================
 -- UTILITY: ANTI-AFK & INSTANT PROMPT
 -- ==========================================
-function Goru.SetAntiAfk(enabled)
-    State.AntiAfk = enabled and true or false
-end
-
-function Goru.SetInstantPrompt(enabled)
-    State.InstantPrompt = enabled and true or false
-end
-
 LocalPlayer.Idled:Connect(function()
-    if State.AntiAfk then
+    if getgenv().BaristaAntiAfk then
         VirtualUser:Button2Down(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
         task.wait(1)
         VirtualUser:Button2Up(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
@@ -132,7 +107,7 @@ end)
 
 task.spawn(function()
     while true do
-        if State.InstantPrompt then
+        if getgenv().BaristaInstantPrompt then
             pcall(function()
                 local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
                 if hrp then
@@ -219,8 +194,8 @@ end
 
 local function stepByStage(stage)
     if stage == "NO_GUI" then
-        if State.LastHandledStage ~= "NO_GUI" then
-            State.LastHandledStage = "NO_GUI"
+        if lastHandledStage ~= "NO_GUI" then
+            lastHandledStage = "NO_GUI"
             smoothMoveTo(COORDS.ShiftSpot)
             task.wait(0.4)
             fireNearestPrompt()
@@ -228,8 +203,8 @@ local function stepByStage(stage)
         end
 
     elseif stage == "NPC" then
-        if State.LastHandledStage ~= "NPC" then
-            State.LastHandledStage = "NPC"
+        if lastHandledStage ~= "NPC" then
+            lastHandledStage = "NPC"
             smoothMoveTo(COORDS.CoffeeMachine)
             task.wait(0.4)
             fireNearestPrompt()
@@ -237,14 +212,14 @@ local function stepByStage(stage)
         end
 
     elseif stage == "BREWING" then
-        if State.LastHandledStage ~= "BREWING" then
-            State.LastHandledStage = "BREWING"
+        if lastHandledStage ~= "BREWING" then
+            lastHandledStage = "BREWING"
             -- Slot auto-solve MinigameFrame
         end
 
     elseif stage == "ORDER" then
-        if State.LastHandledStage ~= "ORDER" then
-            State.LastHandledStage = "ORDER"
+        if lastHandledStage ~= "ORDER" then
+            lastHandledStage = "ORDER"
             smoothMoveTo(COORDS.Customer)
             task.wait(0.4)
             fireNearestPrompt()
@@ -252,48 +227,43 @@ local function stepByStage(stage)
         end
 
     elseif stage == "GOOD" then
-        if State.LastHandledStage ~= "GOOD" then
-            State.LastHandledStage = "GOOD"
+        if lastHandledStage ~= "GOOD" then
+            lastHandledStage = "GOOD"
             task.wait(0.5)
             smoothMoveTo(COORDS.ShiftSpot)
         end
     end
 end
 
-function Goru.StartFarm()
-    Goru.StartSniffer()
-    if farmThread then task.cancel(farmThread) end
-    State.AutoFarm = true
-    State.LastHandledStage = nil
+local function startBaristaFarm()
+    if farmRunning then return end
+    farmRunning = true
+    lastHandledStage = nil
 
-    farmThread = task.spawn(function()
+    task.spawn(function()
         selectBaristaJob()
         task.wait(1.2)
 
-        while State.AutoFarm do
+        while getgenv().BaristaAutoFarm and farmRunning do
             pcall(function()
-                stepByStage(State.CurrentStage)
+                stepByStage(currentStage)
             end)
             task.wait(0.3)
         end
+
+        farmRunning = false
+        lastHandledStage = nil
     end)
 end
 
-function Goru.StopFarm()
-    State.AutoFarm = false
-    State.LastHandledStage = nil
-    if farmThread then
-        task.cancel(farmThread)
-        farmThread = nil
-    end
+local function stopBaristaFarm()
+    getgenv().BaristaAutoFarm = false
+    farmRunning = false
+    lastHandledStage = nil
 end
 
--- Auto-sync kalau state AutoFarm sudah sempat aktif sebelum Goru selesai dimuat
-if State.AutoFarm then
-    task.spawn(Goru.StartFarm)
-end
+-- Daftarkan fungsi ke global environment seperti Hujre
+getgenv().RunBaristaFarm = startBaristaFarm
+getgenv().StopBaristaFarm = stopBaristaFarm
 
-Goru.StartSniffer()
-getgenv().GoruCore = Goru
-print("[Goru.lua] Core logic siap!")
-return Goru
+print("[Goru.lua] Barista logic siap!")
