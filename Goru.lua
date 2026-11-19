@@ -288,6 +288,11 @@ function Goru.StopFarm()
     end
 end
 
+-- Auto-sync kalau state AutoFarm sudah sempat aktif sebelum Goru selesai dimuat
+if State.AutoFarm then
+    task.spawn(Goru.StartFarm)
+end
+
 Goru.StartSniffer()
 getgenv().GoruCore = Goru
 print("[Goru.lua] Core logic siap!")
